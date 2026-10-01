@@ -1,0 +1,14 @@
+# ComplyNexus backend — FastAPI Agentic RAG service
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+openai>=1.40.0
+chromadb==1.5.9            # pin to match the chromadb/chroma server image
+# Used by the shared ingestion job (parse stage) when this image runs the pipeline.
+pypdf>=4.3.0
+# Required for multipart/form-data file uploads.
+python-multipart>=0.0.9
+# Async job queue for ingestion (worker + Redis broker/result backend).
+celery>=5.3.0
+redis>=5.0.0

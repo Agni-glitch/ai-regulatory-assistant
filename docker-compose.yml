@@ -1,0 +1,212 @@
+# ComplyNexus — full stack
+#
+# Browser
+#   ↓
+# Nginx
+#   ├── Frontend React SPA
+#   └── Backend FastAPI
+#           ├── ChromaDB
+#           └── Redis → Celery Worker → Ingestion
+#
+# Start:
+#   docker compose up --build
+#
+# App:
+#   http://localhost
+#
+# API:
+#   http://localhost/api/health
+#
+# Manual ingestion:
+#   docker compose run --rm ingest
+#
+# Reset the index (keeps other Docker data):
+#   docker compose run --rm ingest --reset
+
+services:
+
+  # ---------------------------------------------------------
+  # ChromaDB — persistent vector database
+  # ---------------------------------------------------------
+  chromadb:
+    image: chromadb/chroma:1.5.9
+    restart: unless-stopped
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - ./chroma_data:/chroma/chroma
+
+    environment:
+      IS_PERSISTENT: "TRUE"
+      PERSIST_DIRECTORY: /chroma/chroma
+
+
+  # ---------------------------------------------------------
+  # Redis — Celery broker + result backend
+  # ---------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+    expose:
+      - "6379"
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+
+  # ---------------------------------------------------------
+  # FastAPI backend
+  # ---------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+
+      BACKEND_PORT: "8080"
+
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+      DOCS_DIR: /app/document
+
+    volumes:
+      - ./document:/app/document
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    expose:
+      - "8080"
+
+
+  # ---------------------------------------------------------
+  # Celery worker
+  # ---------------------------------------------------------
+  worker:
+    build:
+      context: ./backend
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+      PYTHONPATH: /app
+
+      DOCS_DIR: /work/document
+      INGESTION_DIR: /work/ingestion
+
+    working_dir: /work
+
+    volumes:
+      - ./ingestion:/work/ingestion:ro
+      - ./document:/work/document:ro
+      - ./data/ingest:/work/data
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    command:
+      [
+        "celery",
+        "-A",
+        "app.celery_app",
+        "worker",
+        "--loglevel=info",
+        "--concurrency=1"
+      ]
+
+
+  # ---------------------------------------------------------
+  # React frontend
+  # ---------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+
+      args:
+        VITE_API_BASE: /api
+
+    restart: unless-stopped
+
+    expose:
+      - "80"
+
+
+  # ---------------------------------------------------------
+  # Nginx reverse proxy
+  # ---------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+
+    restart: unless-stopped
+
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+    ports:
+      - "80:80"
+
+    depends_on:
+      - frontend
+      - backend
+
+
+  # ---------------------------------------------------------
+  # One-shot ingestion container
+  # ---------------------------------------------------------
+  ingest:
+    build:
+      context: ./backend
+
+    profiles:
+      - tools
+
+    env_file:
+      - .env
+
+    environment:
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: "8000"
+
+      DOCS_DIR: /work/document
+      INGESTION_DIR: /work/ingestion
+
+    volumes:
+      - ./ingestion:/work/ingestion:ro
+      - ./document:/work/document:ro
+      - ./data/ingest:/work/data
+
+    working_dir: /work
+
+    entrypoint:
+      [
+        "python",
+        "ingestion/run_pipeline.py",
+        "--docs",
+        "/work/document"
+      ]

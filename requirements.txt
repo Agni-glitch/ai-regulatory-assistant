@@ -1,0 +1,18 @@
+# =============================================================================
+# ComplyNexus / LexGuard AI — Requirements
+# Phase: Data Ingestion → Parsing & Text Extraction
+# Environment: locked-down org laptop, Python 3.14, pip-only, NO system deps
+# =============================================================================
+#
+# Uses pypdf (pure Python, installs on any Python incl. 3.14). No compiler,
+# no admin, no OCR. Scanned PDFs are FLAGGED, not OCR'd.
+#
+# NOTE: pin the exact version after install with:
+#   pip freeze | findstr /i pypdf
+# =============================================================================
+
+pypdf>=4.3.0               # pure-Python PDF text extraction (works on 3.14)
+
+# --- Indexing stage (needs network: Azure OpenAI + ChromaDB) ----------------
+openai>=1.40.0             # Azure OpenAI client (embeddings: ada-002)
+chromadb==1.5.9            # vector store client — pin to match the server image
